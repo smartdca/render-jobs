@@ -93,7 +93,7 @@ def frame(f, use_patch=True):
 
 def main(f0, f1, out):
     enc = subprocess.Popen(['ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{OW}x{OH}', '-r', str(FPS), '-i', '-',
-                            '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+                            '-c:v', 'libx264', '-preset', 'medium', '-crf', '21', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
                             '-pix_fmt', 'yuv420p', '-profile:v', 'high', out], stdin=subprocess.PIPE)
     for f in range(f0, f1): enc.stdin.write(frame(f).tobytes())
     enc.stdin.close(); enc.wait(); print('done', out, flush=True)

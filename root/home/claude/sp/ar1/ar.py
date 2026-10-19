@@ -27,7 +27,7 @@ def _nearest_fill(valid, *maps):
     return out
 A.G['sN'], A.G['vN'] = _nearest_fill(A.G['mN'], A.G['sN'], A.G['vN'])
 A.G['sL'], A.G['vL'] = _nearest_fill(A.G['mL'], A.G['sL'], A.G['vL'])
-A.G2['sF'], A.G2['vF'] = _nearest_fill(A.G2['mF'], A.G2['sF'], A.G2['vF'])
+A.G2['sF'], A.G2['vF'] = _nearest_fill(A.G2['mF'] | A.G['mF'] | (A.XA[..., 0] > 0), A.G2['sF'], A.G2['vF'])   # far band is drawn with G's mask
 LN = int(round(CN))
 
 # ---------------- tickers on the rim and the audience fascia, speeds quantised so they repeat every 120 s
@@ -46,8 +46,22 @@ def seqs(s):
     if s not in _SEQ:
         n = ST.build(s, 'near', CN / HS, clock=s > 0); n, _ = ST.fix_colours(n, s)
         f = ST.build(s, 'far', CF / HS); f, _ = ST.fix_colours(f, s + 50)
+        if s == len(P['sections']) - 1: n = _clock_to_front(n)
         _SEQ[s] = (n, f)
     return _SEQ[s]
+def _clock_to_front(seq):
+    """last section: turn the tile order (whole tiles, neighbours unchanged) so the game clock faces the camera at 00:00"""
+    W = json.load(open(os.path.join(D, 'warmups.json')))
+    phi = (tau_of(P['clock_zero'], W) % LOOP) / REV; want = (phi * CN + (aN + bN) / 2) % LN
+    best = None
+    for r in range(len(seq)):
+        sq = seq[r:] + seq[:r]; x = 0.0
+        for w, sp in sq:
+            if sp['type'] == 'clock': c = x + w * HS / 2
+            x += w * HS
+        d = abs((c - want + LN / 2) % LN - LN / 2)
+        if best is None or d < best[0]: best = (d, sq)
+    return best[1]
 def tile_spans(seq, h=HS, gap=0.03):
     """[(x0, x1, spec)] pixel spans of each tile slot (incl. gap) in the rendered strip"""
     out = []; x = 0.0

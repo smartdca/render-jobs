@@ -1,0 +1,24 @@
+name: peek
+# render a few single frames and push them to branch "peek" (artifacts can't be downloaded from the workstation)
+on:
+  workflow_dispatch:
+    inputs:
+      code: { description: "python run inside /home/claude/sp/ar1 (writes PNGs to /tmp/p)", required: true }
+permissions:
+  contents: write
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: bash setup.sh
+      - name: render
+        run: |
+          mkdir -p /tmp/p; cd /home/claude/sp/ar1; python3 -c "$CODE" > /tmp/p/log.txt 2>&1 || true
+        env: { CODE: "${{ inputs.code }}" }
+      - name: push
+        run: |
+          cd $GITHUB_WORKSPACE && git config user.name "github-actions" && git config user.email "actions@github.com"
+          git checkout -q --orphan peek && git rm -rqf --cached . && rm -rf p && cp -r /tmp/p p && git add p && git commit -qm peek && git push -f origin peek

@@ -20,7 +20,7 @@ jobs:
           python3 - <<'PY' >> $GITHUB_OUTPUT
           import json, os
           J = json.load(open('jobs.json')); only = [x for x in os.environ.get('ONLY', '').split(',') if x]
-          s1 = [j for j in J['stage1'] if not only or j['id'] in only]
+          s1 = [j for j in J['stage1'] + J.get('test', []) if (j['id'] in only) if only] or [j for j in J['stage1'] if not only]
           print('s1=' + json.dumps({'include': s1})); print('s2=' + json.dumps({'include': J['stage2']}))
           PY
         env: { ONLY: "${{ inputs.only }}" }

@@ -1,0 +1,113 @@
+name: render
+# stage 1: loop + warm-up frames (matrix), collect: join blocks, stage 2: final picture blocks (matrix), publish: join and push to branch "out"
+on:
+  workflow_dispatch:
+    inputs:
+      only: { description: "comma separated job ids to run in stage 1 (empty = all)", required: false, default: "" }
+      final: { description: "run stage 2 + publish", required: false, default: "yes" }
+permissions:
+  contents: write
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      s1: ${{ steps.m.outputs.s1 }}
+      s2: ${{ steps.m.outputs.s2 }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          python3 - <<'PY' >> $GITHUB_OUTPUT
+          import json, os
+          J = json.load(open('jobs.json')); only = [x for x in os.environ.get('ONLY', '').split(',') if x]
+          s1 = [j for j in J['stage1'] if not only or j['id'] in only]
+          print('s1=' + json.dumps({'include': s1})); print('s2=' + json.dumps({'include': J['stage2']}))
+          PY
+        env: { ONLY: "${{ inputs.only }}" }
+  stage1:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy: { fail-fast: false, max-parallel: 20, matrix: "${{ fromJSON(needs.plan.outputs.s1) }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: bash setup.sh
+      - name: render
+        run: |
+          cd /home/claude/sp/ar1; mkdir -p /tmp/o; n=4; a=${{ matrix.a }}; b=${{ matrix.b }}; step=$(( (b-a+n-1)/n ))
+          for k in $(seq 0 $((n-1))); do s=$((a+k*step)); e=$((s+step)); [ $e -gt $b ] && e=$b
+            [ $s -lt $e ] && python3 render_job.py ${{ matrix.kind }} ${{ matrix.n }} $s $e /tmp/o/part$k.mp4 > /tmp/o/log$k.txt 2>&1 &
+          done; wait
+          ls /tmp/o; for k in $(seq 0 $((n-1))); do [ -f /tmp/o/part$k.mp4 ] && echo "file /tmp/o/part$k.mp4" >> /tmp/o/list.txt; done
+          for k in $(seq 0 $((n-1))); do s=$((a+k*step)); [ $s -lt $b ] && [ ! -f /tmp/o/part$k.mp4.ok ] && { echo "::error::part $k failed: $(tail -c 600 /tmp/o/log$k.txt | tr '\n' ' ')"; exit 1; }; done
+          ffmpeg -v error -f concat -safe 0 -i /tmp/o/list.txt -c copy /tmp/o/${{ matrix.id }}.mp4
+          echo "::notice::${{ matrix.id }} ok $(ffprobe -v error -count_packets -select_streams v -show_entries stream=nb_read_packets -of csv=p=0 /tmp/o/${{ matrix.id }}.mp4) frames"
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.id }}", path: "/tmp/o/${{ matrix.id }}.mp4", retention-days: 5, compression-level: 0 }
+  collect:
+    needs: stage1
+    if: ${{ inputs.final == 'yes' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: /tmp/a, merge-multiple: true }
+      - name: join blocks into loops and clips
+        run: |
+          mkdir -p /tmp/j; python3 - <<'PY'
+          import json, subprocess, collections
+          J = json.load(open('jobs.json')); g = collections.defaultdict(list)
+          for j in J['stage1']: g[j['out']].append((j['a'], j['id']))
+          for out, parts in g.items():
+              open('/tmp/l.txt', 'w').write(''.join(f"file /tmp/a/{i}.mp4\n" for _, i in sorted(parts)))
+              subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', '/tmp/l.txt', '-c', 'copy', f'/tmp/j/{out}.mp4'], check=True)
+              n = subprocess.run(['ffprobe', '-v', 'error', '-count_packets', '-select_streams', 'v', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', f'/tmp/j/{out}.mp4'], capture_output=True, text=True).stdout.strip()
+              print(f'::notice::{out} {n} frames')
+          PY
+      - uses: actions/upload-artifact@v4
+        with: { name: "joined", path: "/tmp/j/*.mp4", retention-days: 5, compression-level: 0 }
+  stage2:
+    needs: [plan, collect]
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy: { fail-fast: false, max-parallel: 20, matrix: "${{ fromJSON(needs.plan.outputs.s2) }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: bash setup.sh
+      - uses: actions/download-artifact@v4
+        with: { name: joined, path: /tmp/j }
+      - name: final picture block
+        run: |
+          mkdir -p /home/claude/sp/ar1/loops /home/claude/sp/ar1/clips /tmp/o
+          for f in /tmp/j/L*.mp4; do ln -sf $f /home/claude/sp/ar1/loops/; done; for f in /tmp/j/w*.mp4; do ln -sf $f /home/claude/sp/ar1/clips/; done
+          cd /home/claude/sp/ar1; n=4; a=${{ matrix.a }}; b=${{ matrix.b }}; step=$(( (b-a+n-1)/n ))
+          for k in $(seq 0 $((n-1))); do s=$((a+k*step)); e=$((s+step)); [ $e -gt $b ] && e=$b
+            [ $s -lt $e ] && python3 assemble.py $s $e /tmp/o/part$k.mp4 > /tmp/o/log$k.txt 2>&1 &
+          done; wait
+          for k in $(seq 0 $((n-1))); do s=$((a+k*step)); [ $s -lt $b ] && { grep -q done /tmp/o/log$k.txt || { echo "::error::part $k failed: $(tail -c 600 /tmp/o/log$k.txt | tr '\n' ' ')"; exit 1; }; echo "file /tmp/o/part$k.mp4" >> /tmp/o/list.txt; }; done
+          ffmpeg -v error -f concat -safe 0 -i /tmp/o/list.txt -c copy /tmp/o/${{ matrix.id }}.mp4
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.id }}", path: "/tmp/o/${{ matrix.id }}.mp4", retention-days: 5, compression-level: 0 }
+  publish:
+    needs: stage2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: /tmp/f, pattern: "F*", merge-multiple: true }
+      - name: join and push to branch out
+        run: |
+          ls /tmp/f | sort > /tmp/names.txt; sed 's|^|file /tmp/f/|' /tmp/names.txt > /tmp/l.txt
+          mkdir -p /tmp/out; ffmpeg -v error -f concat -safe 0 -i /tmp/l.txt -c copy /tmp/out/video.mp4
+          cd /tmp/out; ffprobe -v error -show_entries format=duration -of csv=p=0 video.mp4 > info.txt; sha256sum video.mp4 > video.sha256
+          split -b 90M video.mp4 video.part; rm video.mp4; ls -la >> info.txt
+          cd $GITHUB_WORKSPACE && git config user.name "github-actions" && git config user.email "actions@github.com"
+          git checkout -q --orphan out && git rm -rqf --cached . && rm -rf media && mkdir media
+          cp /tmp/out/info.txt /tmp/out/video.sha256 media/ && git add media && git commit -qm "out info" && git push -f origin out
+          ls /tmp/out/video.part* | split -l 12 - /tmp/batch.                      # GitHub takes at most 2 GB per push
+          for bf in /tmp/batch.*; do for f in $(cat $bf); do mv $f media/; done; git add media && git commit -qm "out $(basename $bf)" && git push origin out; done
+          echo "::notice::published $(cat /tmp/out/info.txt | head -1)"

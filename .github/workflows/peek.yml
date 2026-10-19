@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       code: { description: "python run inside /home/claude/sp/ar1 (writes PNGs to /tmp/p)", required: true }
+      tag: { description: "branch suffix", required: false, default: "x" }
 permissions:
   contents: write
 jobs:
@@ -21,4 +22,4 @@ jobs:
       - name: push
         run: |
           cd $GITHUB_WORKSPACE && git config user.name "github-actions" && git config user.email "actions@github.com"
-          git checkout -q --orphan peek && git rm -rqf --cached . && rm -rf p && cp -r /tmp/p p && git add p && git commit -qm peek && git push -f origin peek
+          B=peek-${{ inputs.tag }}; git checkout -q --orphan $B && git rm -rqf --cached . && rm -rf p && cp -r /tmp/p p && git add p && git commit -qm peek && git push -f origin $B

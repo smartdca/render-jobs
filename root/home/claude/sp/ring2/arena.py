@@ -182,7 +182,9 @@ def ink(text, h):
     ImageDraw.Draw(im).text((1 - bb[0], (h - (bb[3] - bb[1])) / 2 - bb[1]), text, font=f, fill=255)
     return np.asarray(im, np.float32) / 255
 def loop_mask(text, L, h, g=0.8):
-    L = int(round(L)); it = ink(text, h); tw = it.shape[1]; n = max(1, int(round(L / (tw + g * h)))); gap = (L - n * tw) / n
+    L = int(round(L)); it = ink(text, h); tw = it.shape[1]; n = max(1, int(round(L / (tw + g * h))))
+    while n > 1 and (L - n * tw) / n < 0.3 * h: n -= 1                   # long phrases: never overlap the repeats
+    gap = (L - n * tw) / n
     m = np.zeros((h, L), np.float32); t_ = int(round(h * 0.035)); m[:t_] = 1; m[-t_:] = 1; x = gap / 2
     for _ in range(n):
         xi = int(round(x)); w = max(0, min(tw, L - xi)); m[:, xi:xi + w] = np.maximum(m[:, xi:xi + w], it[:, :w]); x += tw + gap

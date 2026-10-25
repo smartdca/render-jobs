@@ -5,8 +5,10 @@ on:
     inputs:
       only: { description: "comma separated job ids to run in stage 1 (empty = all)", required: false, default: "" }
       final: { description: "run stage 2 + publish", required: false, default: "yes" }
+      from_run: { description: "reuse stage-1 results of this run id (skips stage 1)", required: false, default: "" }
 permissions:
   contents: write
+  actions: read
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -26,6 +28,7 @@ jobs:
         env: { ONLY: "${{ inputs.only }}" }
   stage1:
     needs: plan
+    if: ${{ inputs.from_run == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy: { fail-fast: false, max-parallel: 20, matrix: "${{ fromJSON(needs.plan.outputs.s1) }}" }
@@ -48,12 +51,13 @@ jobs:
         with: { name: "${{ matrix.id }}", path: "/tmp/o/${{ matrix.id }}.mp4", retention-days: 5, compression-level: 0 }
   collect:
     needs: stage1
-    if: ${{ inputs.final == 'yes' }}
+    if: ${{ always() && inputs.final == 'yes' && (needs.stage1.result == 'success' || inputs.from_run != '') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq ffmpeg > /dev/null
       - uses: actions/download-artifact@v4
-        with: { path: /tmp/a, merge-multiple: true }
+        with: { path: /tmp/a, merge-multiple: true, run-id: "${{ inputs.from_run || github.run_id }}", github-token: "${{ secrets.GITHUB_TOKEN }}" }
       - name: join blocks into loops and clips
         run: |
           mkdir -p /tmp/j; python3 - <<'PY'
@@ -70,6 +74,7 @@ jobs:
         with: { name: "joined", path: "/tmp/j/*.mp4", retention-days: 5, compression-level: 0 }
   stage2:
     needs: [plan, collect]
+    if: ${{ always() && needs.collect.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy: { fail-fast: false, max-parallel: 20, matrix: "${{ fromJSON(needs.plan.outputs.s2) }}" }
@@ -94,9 +99,11 @@ jobs:
         with: { name: "${{ matrix.id }}", path: "/tmp/o/${{ matrix.id }}.mp4", retention-days: 5, compression-level: 0 }
   publish:
     needs: stage2
+    if: ${{ always() && needs.stage2.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq ffmpeg > /dev/null
       - uses: actions/download-artifact@v4
         with: { path: /tmp/f, pattern: "F*", merge-multiple: true }
       - name: join and push to branch out

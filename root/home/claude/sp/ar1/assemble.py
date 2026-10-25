@@ -56,6 +56,23 @@ def loop_reader(s):
     if s not in LOOPS: LOOPS[s] = Reader(D + f'loops/L{s}.mp4', ar.NL)
     return LOOPS[s]
 
+# buzzer-beater celebration: the crowd's phone flashes go wild around clock zero (drawn at output size)
+_Z = P['clock_zero']; _SC = OW / ar.A.W
+FIN_EV = [(e[0] + _Z - 1.5,) + tuple(e[1:]) for e in ar.A.make_flashes(10.5, lambda u: u >= 1.4, seed=777)]
+_fy, _fx = np.mgrid[0:65, 0:65].astype(np.float32) - 32
+def fin_flashes(fr, t, amt):
+    for (t0, x, y, sz, br, du) in FIN_EV:
+        if not (t0 <= t < t0 + du + 0.12): continue
+        kk = amt * br * (1.0 if t < t0 + du else max(0, 1 - (t - t0 - du) / 0.12)) ** 1.5
+        sz = sz * _SC; xo = int(x * _SC); yo = int((y - ar.A.CROP[0]) * _SC)
+        rr = np.sqrt(_fx ** 2 + _fy ** 2)
+        g = (np.exp(-(rr / sz) ** 2) * 1.4 + np.exp(-(rr / (sz * 3.5))) * 0.45 +
+             (np.exp(-(np.abs(_fy) / (0.6 + sz * 0.15)) ** 2 - (np.abs(_fx) / (sz * 6)) ** 2) +
+              np.exp(-(np.abs(_fx) / (0.6 + sz * 0.15)) ** 2 - (np.abs(_fy) / (sz * 6)) ** 2)) * 0.35) * kk * 255
+        y0, x0 = yo - 32, xo - 32; ys = slice(max(0, y0), min(OH, y0 + 65)); xs = slice(max(0, x0), min(OW, x0 + 65))
+        if ys.start >= ys.stop or xs.start >= xs.stop: continue
+        fr[ys, xs] += g[ys.start - y0:ys.stop - y0, xs.start - x0:xs.stop - x0, None] * np.array([1.0, 0.98, 0.94])
+    return fr
 def frame(f, use_patch=True):
     t = f / FPS; bl, ca, name, rem = card_state(t)
     n, w = clip_at(f)
@@ -85,6 +102,7 @@ def frame(f, use_patch=True):
             if xe > x0: fr[yb - 1:yb + 2, x0:xe] = fr[yb - 1:yb + 2, x0:xe] * (1 - ca) + org * ca
     k = min(ss(t, 0, 2.0), 1 - ss(t, T - 1.6, T))
     fr = fr * 255.0
+    if FIN_EV and P['clock_zero'] - 1.5 <= t <= P['clock_zero'] + 9 and bl < 0.9: fr = fin_flashes(fr, t, 1 - bl)
     if GRAIN:                                         # temporal film grain at output size (same character as the 2x render's)
         lum = fr.mean(-1, keepdims=True) / 255
         g = cv2.resize(np.random.default_rng(f + 7).normal(0, 1, (OH // 2, OW // 2)).astype(np.float32), (OW, OH), interpolation=cv2.INTER_LINEAR)

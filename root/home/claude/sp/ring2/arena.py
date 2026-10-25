@@ -35,7 +35,7 @@ _ENDS = [
   dict(side=1, x0=1040, x1=1195, xb=1090,
        sb=[(1090,458),(1110,467),(1130,478),(1147,490),(1160,500),(1167,507)],
        wb=[(1060,477),(1093,487),(1127,500),(1147,513),(1160,527),(1163,532)],
-       limb=[(1132,420),(1150,460),(1160,490),(1167,507)],
+       limb=[(1063,303),(1090,327),(1107,353),(1120,380),(1133,412),(1147,453),(1157,480),(1167,507)],   # traced from the photo's screen edge (2026-10-25: was a notch at y 420)
        rimedge=[(1167,507),(1168,513),(1167,527),(1163,532)]),
 ]
 def _ip(pts, x):
@@ -209,16 +209,25 @@ def beams(t, amt, t0):
         c = (p1 + p2) / 2; cv2.ellipse(cone, (int(c[0]), int(c[1])), (int(85 * SW), int(26 * SW)), 0, 0, 360, 0.55, -1)
         acc += cone
     return cv2.resize(cv2.GaussianBlur(acc, (0, 0), 4) * 0.8 + cv2.GaussianBlur(acc, (0, 0), 22) * 0.7, (W, H)) * amt
-CY0, CY1 = 1290, 1780                                  # crowd rows (2x) below the strip
+CY0, CY1 = 1290, 1536                                  # crowd rows (2x) below the strip, inside the 16:9 crop (was 1780: half the flashes fell outside the picture)
+FLASH_RATE = (0.9, 7.5)                                # phone flashes per second, all on screen: normal / cheering (2026-10-25)
+BURST = 0.55                                           # while cheering, about half the flashes go off in bursts (several phones at once)
 def make_flashes(T, busy, seed=11):
     r = np.random.default_rng(seed); ev = []; t = 0.0
-    while t < T:
-        t += r.exponential(1 / (3.5 if busy(t) else 0.55))
+    def one(t):
         for _ in range(60):
             x = int(r.uniform(30, W - 30)); y = int(r.uniform(CY0, CY1))
             if not (G['mN'][y, x] or G['mF'][y, x] or G['mL'][y, x] or FMASK[max(0, y - 8):y + 9, x].any()): break
         near = (y - CY0) / (CY1 - CY0)
         ev.append((t, x, y, (2.6 + 5.5 * near) * 1.2, 0.55 + 0.45 * near, r.uniform(0.08, 0.16)))
+    while t < T:
+        b = busy(t); rate = FLASH_RATE[1] if b else FLASH_RATE[0]
+        if b and r.random() < BURST / 5.0 * 5 / (1 + 4 * BURST):          # a burst stands for ~5 flashes
+            t += r.exponential(5 / rate)
+            for _ in range(int(r.integers(3, 9))): one(t + r.uniform(0, 0.05))
+        else:
+            t += r.exponential(1 / rate); one(t)
+    ev.sort(key=lambda e: e[0])
     return ev
 _fy, _fx2 = np.mgrid[0:81, 0:81].astype(np.float32) - 40
 def add_flashes(out, t, ev):
@@ -249,6 +258,8 @@ G['mF'] &= ~_fm
 _ft = np.array([np.nonzero(G['mF'][:, x])[0].min() if G['mF'][:, x].any() else -1 for x in range(W)])
 _hs = cv2.cvtColor(np.clip(BASE, 0, 255).astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
 _old = ((_hs[..., 1] > 55) & (_hs[..., 2] > 50)) | (_hs[..., 2] > 115)
+_lamp = cv2.dilate(((_hs[..., 2] > 165) & (_hs[..., 1] < 70)).astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+_old &= ~_lamp                                                     # keep the hanging lamps (inpainting them smeared them into haze)
 _strip = np.zeros((H, W), bool)
 for _x2 in range(380 * S2, 1010 * S2):
     if _ft[_x2] > 0: _strip[max(0, _ft[_x2] - 50 * S2):_ft[_x2] + 2, _x2] = True

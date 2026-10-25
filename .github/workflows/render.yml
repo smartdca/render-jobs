@@ -62,13 +62,19 @@ jobs:
         run: |
           mkdir -p /tmp/j; python3 - <<'PY'
           import json, subprocess, collections
-          J = json.load(open('jobs.json')); g = collections.defaultdict(list)
-          for j in J['stage1']: g[j['out']].append((j['a'], j['id']))
+          import os, sys
+          J = json.load(open('jobs.json')); g = collections.defaultdict(list); want = collections.Counter()
+          for j in J['stage1']: g[j['out']].append((j['a'], j['id'])); want[j['out']] += j['b'] - j['a']
+          miss = [j['id'] for j in J['stage1'] if not os.path.exists(f"/tmp/a/{j['id']}.mp4")]
+          print('downloaded', len(os.listdir('/tmp/a')), 'missing', miss)
+          open('/tmp/j_report.txt', 'w').write(f"missing {miss}\n")
+          if miss: print(f'::error::missing {len(miss)} blocks: {miss[:20]}'); sys.exit(1)
           for out, parts in g.items():
               open('/tmp/l.txt', 'w').write(''.join(f"file /tmp/a/{i}.mp4\n" for _, i in sorted(parts)))
               subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', '/tmp/l.txt', '-c', 'copy', f'/tmp/j/{out}.mp4'], check=True)
               n = subprocess.run(['ffprobe', '-v', 'error', '-count_packets', '-select_streams', 'v', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', f'/tmp/j/{out}.mp4'], capture_output=True, text=True).stdout.strip()
-              print(f'::notice::{out} {n} frames')
+              if int(n) != want[out]: print(f'::error::{out} has {n} frames, expected {want[out]}'); sys.exit(1)
+          print('::notice::all blocks joined')
           PY
       - uses: actions/upload-artifact@v4
         with: { name: "joined", path: "/tmp/j/*.mp4", retention-days: 5, compression-level: 0 }

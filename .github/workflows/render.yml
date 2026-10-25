@@ -56,12 +56,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get install -y -qq ffmpeg > /dev/null
-      - uses: actions/download-artifact@v4          # (one call only lists 100 artifacts: split by name)
-        with: { path: /tmp/a, pattern: "L*", merge-multiple: true, run-id: "${{ inputs.from_run || github.run_id }}", github-token: "${{ secrets.GITHUB_TOKEN }}" }
-      - uses: actions/download-artifact@v4
-        with: { path: /tmp/a, pattern: "w?_*", merge-multiple: true, run-id: "${{ inputs.from_run || github.run_id }}", github-token: "${{ secrets.GITHUB_TOKEN }}" }
-      - uses: actions/download-artifact@v4
-        with: { path: /tmp/a, pattern: "w??_*", merge-multiple: true, run-id: "${{ inputs.from_run || github.run_id }}", github-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: download stage-1 blocks (all pages)
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", RUN: "${{ inputs.from_run || github.run_id }}" }
+        run: |
+          mkdir -p /tmp/a
+          gh api --paginate "repos/${{ github.repository }}/actions/runs/$RUN/artifacts?per_page=100" --jq '.artifacts[] | .name + " " + (.id|tostring)' | grep -E '^(L|w)[0-9]+_' > /tmp/arts.txt
+          wc -l /tmp/arts.txt
+          while read n id; do gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/z.zip && unzip -o -q /tmp/z.zip -d /tmp/a; done < /tmp/arts.txt
       - name: join blocks into loops and clips
         run: |
           mkdir -p /tmp/j; python3 - <<'PY'
